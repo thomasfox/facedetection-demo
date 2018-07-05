@@ -18,6 +18,7 @@ from skimage.feature import hog
 from skimage import data, exposure
 from matplotlib import pyplot
 from requests_toolbelt.multipart import decoder
+import time
 
 
 
@@ -25,7 +26,15 @@ from requests_toolbelt.multipart import decoder
 class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
  
     face_descriptors = {}
- 
+
+    step_times = []
+
+    hog_face_detector = dlib.get_frontal_face_detector()
+
+    predictor = dlib.shape_predictor("shape_predictor_5_face_landmarks.dat")
+
+    facerec = dlib.face_recognition_model_v1("dlib_face_recognition_resnet_model_v1.dat")
+
     def do_GET(self):
         f = self.send_head()
         if f:
@@ -107,6 +116,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         return (True, "File '%s' upload success!" % filename)
 
     def process_uploaded_file(self, absoluteFile: str, filename:str, action: str, label: str):
+        self.step_times.clear()
         if (action == "upload"):
             self.display_upload_success(filename)
         if (action == "hog"):
@@ -114,7 +124,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self.display_files(filename, "hog")
         if (action == "facedetection"):
             self.detect_faces(absoluteFile, filename)
-            self.display_files(filename, "facedetect")
+            self.display_files(filename, "facedetection")
         if (action == "facelandmark"):
             self.landmark_faces(absoluteFile, filename)
             self.display_files(filename, "facelandmark")
@@ -129,28 +139,31 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         image = dlib.load_grayscale_image(absoluteFile)
         fd, hog_image = hog(image, orientations=8, pixels_per_cell=(16, 16),
                     cells_per_block=(1, 1), visualize=True, multichannel=False)
-
+        start_time = time.clock()
         hog_image_rescaled = exposure.rescale_intensity(hog_image, in_range=(0, 10))
-
+        self.step_times.append("HOG Creation: " + str(time.clock() - start_time) + " s")
         processed_file = self.path_to_processed_file(filename, "hog")
         pyplot.imsave(processed_file, hog_image_rescaled)
 
     def detect_faces(self, absoluteFile: str, filename: str):
-        hog_face_detector = dlib.get_frontal_face_detector()
         image = dlib.load_rgb_image(absoluteFile)
-        dets_hog = hog_face_detector(image, 1)
+        start_time = time.clock()
+        dets_hog = self.hog_face_detector(image, 1)
+        self.step_times.append("HOG + SVM Detection: " + str(time.clock() - start_time) + " s")
         for i, d in enumerate(dets_hog):
             draw_rect(image, d)
-        processed_file = self.path_to_processed_file(filename, "facedetect")
+        processed_file = self.path_to_processed_file(filename, "facedetection")
         dlib.save_image(image, processed_file)
 
     def landmark_faces(self, absoluteFile: str, filename: str):
-        hog_face_detector = dlib.get_frontal_face_detector()
         image = dlib.load_rgb_image(absoluteFile)
-        dets_hog = hog_face_detector(image, 1)
-        predictor = dlib.shape_predictor("shape_predictor_5_face_landmarks.dat")
+        start_time = time.clock()
+        dets_hog = self.hog_face_detector(image, 1)
+        self.step_times.append("HOG + SVM Detection: " + str(time.clock() - start_time) + " s")
         for i, d in enumerate(dets_hog):
-            shape = predictor(image, d)
+            start_time = time.clock()
+            shape = self.predictor(image, d)
+            self.step_times.append("Landmark Detection: " + str(time.clock() - start_time) + " s")
             draw_rect(image, d)
             draw_marker(image, shape.parts())
         processed_file = self.path_to_processed_file(filename, "facelandmark")
@@ -159,16 +172,21 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
     def label_face(self, absoluteFile: str, filename: str, label: str):
         if not label:
             return False
-        hog_face_detector = dlib.get_frontal_face_detector()
         image = dlib.load_rgb_image(absoluteFile)
-        dets_hog = hog_face_detector(image, 1)
+        start_time = time.clock()
+        dets_hog = self.hog_face_detector(image, 1)
+        self.step_times.append("HOG + SVM Detection: " + str(time.clock() - start_time) + " s")
         if len(dets_hog) != 1:
             return False
-        predictor = dlib.shape_predictor("shape_predictor_5_face_landmarks.dat")
-        facerec = dlib.face_recognition_model_v1("dlib_face_recognition_resnet_model_v1.dat")
         for i, d in enumerate(dets_hog):
-            shape = predictor(image, d)
-            face_descriptor = facerec.compute_face_descriptor(image, shape)
+            start_time = time.clock()
+            shape = self.predictor(image, d)
+            self.step_times.append("Landmark Detection: " + str(time.clock() - start_time) + " s")
+
+            start_time = time.clock()
+            face_descriptor = self.facerec.compute_face_descriptor(image, shape)
+            self.step_times.append("Face Descriptor Computation: " + str(time.clock() - start_time) + " s")
+
             self.face_descriptors[label] = face_descriptor;
             draw_rect(image, d)
         print("labeled face as " + label)
@@ -178,14 +196,23 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
     def recognize_face(self, absoluteFile: str, filename: str):
         if len(self.face_descriptors) == 0:
             return False
-        hog_face_detector = dlib.get_frontal_face_detector()
         image = dlib.load_rgb_image(absoluteFile)
-        dets_hog = hog_face_detector(image, 1)
-        predictor = dlib.shape_predictor("shape_predictor_5_face_landmarks.dat")
-        facerec = dlib.face_recognition_model_v1("dlib_face_recognition_resnet_model_v1.dat")
+        start_time = time.clock()
+        dets_hog = self.hog_face_detector(image, 1)
+        self.step_times.append("HOG + SVM Detection: " + str(time.clock() - start_time) + " s")
         for i, d in enumerate(dets_hog):
-            shape = predictor(image, d)
-            face_descriptor = facerec.compute_face_descriptor(image, shape)
+            start_time = time.clock()
+            shape = self.predictor(image, d)
+            self.step_times.append("Landmark Detection: " + str(time.clock() - start_time) + " s")
+
+            face_chip = dlib.get_face_chip(image, shape)
+            chip_file = self.path_to_processed_file(filename, str(i))
+            dlib.save_image(face_chip, chip_file)
+
+            start_time = time.clock()
+            face_descriptor = self.facerec.compute_face_descriptor(image, shape)
+            self.step_times.append("Face Descriptor Computation: " + str(time.clock() - start_time) + " s")
+
             draw_rect(image, d)
             for label, known_descriptor in self.face_descriptors.items():
                 distance = 0.0
@@ -196,7 +223,6 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         processed_file = self.path_to_processed_file(filename, "facerecognition")
         dlib.save_image(image, processed_file)
 
-
     def display_files(self, filename, classifier):
         uploaded_file = self.path_to_uploaded_file(filename)
         processed_file = self.path_to_processed_file(filename, classifier)
@@ -205,6 +231,10 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         f.write(b"<html>\n<title>Processed File result</title>\n")
         f.write(("<img src=\"%s\"/>\n" % uploaded_file).encode())
         f.write(("<img src=\"%s\"/>\n" % processed_file).encode())
+        f.write(b"<br><br>")
+        f.write(b"<h2>process times</h2>")
+        for step_time in self.step_times:
+            f.write((step_time + "<br>").encode())
         f.write(("<br><a href=\"%s\">back</a>" % self.headers['referer']).encode())
         f.write(b"</body>\n</html>\n")
         length = f.tell()
@@ -384,15 +414,10 @@ def draw_rect(img, rect):
 def draw_marker(img, markers):
     markerpixel = [0,255,0]
     for point in enumerate(markers):
-        img[point[1].y][point[1].x] = markerpixel
-        img[point[1].y][point[1].x + 1] = markerpixel
-        img[point[1].y][point[1].x + 2] = markerpixel
-        img[point[1].y][point[1].x - 1] = markerpixel
-        img[point[1].y][point[1].x - 2] = markerpixel
-        img[point[1].y + 1][point[1].x] = markerpixel
-        img[point[1].y + 2][point[1].x] = markerpixel
-        img[point[1].y - 1][point[1].x] = markerpixel
-        img[point[1].y - 2][point[1].x] = markerpixel
+        for i in range(-6, 7): # line lenght
+            for j in range(-1, 2): # line width
+                img[point[1].y + j][point[1].x + i] = markerpixel
+                img[point[1].y + i][point[1].x + j] = markerpixel
 
 if __name__ == '__main__':
     test()
