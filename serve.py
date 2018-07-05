@@ -11,6 +11,7 @@ import cgi
 import shutil
 import mimetypes
 import re
+import math
 from io import BytesIO
 import dlib
 from skimage.feature import hog
@@ -22,6 +23,8 @@ from requests_toolbelt.multipart import decoder
 
 
 class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
+ 
+    face_descriptors = {}
  
     def do_GET(self):
         f = self.send_head()
@@ -64,6 +67,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         if not content_type:
             return (False, "No Content-Type header")
         multipart_data = decoder.MultipartDecoder(self.rfile.read(data_length), content_type)
+        label = None
         for part in multipart_data.parts:
             content_disposition = part.headers[b"Content-Disposition"]
             if b"name=\"file\"" in content_disposition:
@@ -73,12 +77,15 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             if b"name=\"action\"" in content_disposition:
                 action = part.text
                 print("action is " + action)
+            if b"name=\"label\"" in content_disposition:
+                label = part.text
+                print("label is " + label)
 
         if not filename:
             return (False, "Can't find out file name")
         if not action:
             return (False, "Can't find out action")
-        if (filename.endswith(".py")):
+        if (filename.endswith(".py") or filename.endswith(".dat")):
              directory = self.translate_path(self.path)
         else:
             if not (filename.endswith(".jpg") or filename.endswith(".jpeg") or filename.endswith(".png")):
@@ -96,15 +103,27 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 
         out.write(file_content)
         out.close()
-        self.process_uploaded_file(absolutefile, filename, action)
+        self.process_uploaded_file(absolutefile, filename, action, label)
         return (True, "File '%s' upload success!" % filename)
 
-    def process_uploaded_file(self, absoluteFile: str, filename:str, action: str):
+    def process_uploaded_file(self, absoluteFile: str, filename:str, action: str, label: str):
         if (action == "upload"):
             self.display_upload_success(filename)
         if (action == "hog"):
             self.create_hog_image(absoluteFile, filename)
             self.display_files(filename, "hog")
+        if (action == "facedetection"):
+            self.detect_faces(absoluteFile, filename)
+            self.display_files(filename, "facedetect")
+        if (action == "facelandmark"):
+            self.landmark_faces(absoluteFile, filename)
+            self.display_files(filename, "facelandmark")
+        if (action == "facelabel"):
+            self.label_face(absoluteFile, filename, label)
+            self.display_files(filename, label)
+        if (action == "facerecognition"):
+            self.recognize_face(absoluteFile, filename)
+            self.display_files(filename, "facerecognition")
 
     def create_hog_image(self, absoluteFile: str, filename: str):
         image = dlib.load_grayscale_image(absoluteFile)
@@ -115,6 +134,68 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
         processed_file = self.path_to_processed_file(filename, "hog")
         pyplot.imsave(processed_file, hog_image_rescaled)
+
+    def detect_faces(self, absoluteFile: str, filename: str):
+        hog_face_detector = dlib.get_frontal_face_detector()
+        image = dlib.load_rgb_image(absoluteFile)
+        dets_hog = hog_face_detector(image, 1)
+        for i, d in enumerate(dets_hog):
+            draw_rect(image, d)
+        processed_file = self.path_to_processed_file(filename, "facedetect")
+        dlib.save_image(image, processed_file)
+
+    def landmark_faces(self, absoluteFile: str, filename: str):
+        hog_face_detector = dlib.get_frontal_face_detector()
+        image = dlib.load_rgb_image(absoluteFile)
+        dets_hog = hog_face_detector(image, 1)
+        predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
+        for i, d in enumerate(dets_hog):
+            shape = predictor(image, d)
+            draw_rect(image, d)
+            draw_marker(image, shape.parts())
+        processed_file = self.path_to_processed_file(filename, "facelandmark")
+        dlib.save_image(image, processed_file)
+
+    def label_face(self, absoluteFile: str, filename: str, label: str):
+        if not label:
+            return False
+        hog_face_detector = dlib.get_frontal_face_detector()
+        image = dlib.load_rgb_image(absoluteFile)
+        dets_hog = hog_face_detector(image, 1)
+        if len(dets_hog) != 1:
+            return False
+        predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
+        facerec = dlib.face_recognition_model_v1("dlib_face_recognition_resnet_model_v1.dat")
+        for i, d in enumerate(dets_hog):
+            shape = predictor(image, d)
+            face_descriptor = facerec.compute_face_descriptor(image, shape)
+            self.face_descriptors[label] = face_descriptor;
+            draw_rect(image, d)
+        print("labeled face as " + label)
+        processed_file = self.path_to_processed_file(filename, label)
+        dlib.save_image(image, processed_file)
+
+    def recognize_face(self, absoluteFile: str, filename: str):
+        if len(self.face_descriptors) == 0:
+            return False
+        hog_face_detector = dlib.get_frontal_face_detector()
+        image = dlib.load_rgb_image(absoluteFile)
+        dets_hog = hog_face_detector(image, 1)
+        predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
+        facerec = dlib.face_recognition_model_v1("dlib_face_recognition_resnet_model_v1.dat")
+        for i, d in enumerate(dets_hog):
+            shape = predictor(image, d)
+            face_descriptor = facerec.compute_face_descriptor(image, shape)
+            draw_rect(image, d)
+            for label, known_descriptor in self.face_descriptors.items():
+                distance = 0.0
+                for i in range(len(face_descriptor)):
+                    distance = distance + (face_descriptor[i] - known_descriptor[i]) * (face_descriptor[i] - known_descriptor[i])
+                distance = math.sqrt(distance)
+                print("Distance to {} is {}".format(label, distance))
+        processed_file = self.path_to_processed_file(filename, "facerecognition")
+        dlib.save_image(image, processed_file)
+
 
     def display_files(self, filename, classifier):
         uploaded_file = self.path_to_uploaded_file(filename)
@@ -142,9 +223,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         f.write(b"<strong>Success fully uploaded </strong>")
         f.write(filename.encode())
         f.write(("<br><a href=\"%s\">back</a>" % self.headers['referer']).encode())
-        f.write(b"<hr><small>Powerd By: bones7456, check new version at ")
-        f.write(b"<a href=\"http://li2z.cn/?s=SimpleHTTPServerWithUpload\">")
-        f.write(b"here</a>.</small></body>\n</html>\n")
+        f.write(b"</body>\n</html>\n")
         length = f.tell()
         f.seek(0)
         self.send_response(200)
@@ -163,16 +242,6 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         return os.path.splitext(filename)[0] + '/' + filename
 
     def send_head(self):
-        """Common code for GET and HEAD commands.
-
-        This sends the response code and MIME headers.
-
-        Return value is either a file object (which has to be copied
-        to the outputfile by the caller unless the command was HEAD,
-        and must be closed by the caller under all circumstances), or
-        None, in which case the caller has nothing further to do.
-
-        """
         path = self.translate_path(self.path)
         f = None
         if os.path.isdir(path):
@@ -207,13 +276,6 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         return f
  
     def list_directory(self, path):
-        """Helper to produce a directory listing (absent index.html).
-
-        Return value is either a file object, or None (indicating an
-        error).  In either case, the headers are sent, making the
-        interface the same as for send_head().
-
-        """
         try:
             list = os.listdir(path)
         except os.error:
@@ -231,7 +293,12 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         f.write(b"<select name=\"action\" />")
         f.write(b"<option value=\"upload\">Upload</option>")
         f.write(b"<option value=\"hog\">Generate HOG</option>")
+        f.write(b"<option value=\"facedetection\">Detect faces</option>")
+        f.write(b"<option value=\"facelandmark\">Landmark faces</option>")
+        f.write(b"<option value=\"facelabel\">Label a face</option>")
+        f.write(b"<option value=\"facerecognition\">Recognize faces</option>")
         f.write(b"</select/>")
+        f.write(b" Label: <input name=\"label\"/>")
         f.write(b"<input type=\"submit\" value=\"upload\"/></form>\n")
         f.write(b"<hr>\n<ul>\n")
         for name in list:
@@ -293,12 +360,39 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         '.h': 'text/plain',
         })
 
-
-
-
 def test(HandlerClass = SimpleHTTPRequestHandler,
          ServerClass = http.server.HTTPServer):
     http.server.test(HandlerClass, ServerClass)
- 
+
+def draw_rect(img, rect):
+    markerpixel = [255,0,0]
+    for x in range(rect.left(), rect.right()):
+        img[rect.top()][x] = markerpixel
+        img[rect.top() + 1][x] = markerpixel
+        img[rect.top() - 1][x] = markerpixel
+        img[rect.bottom()][x] = markerpixel
+        img[rect.bottom() - 1][x] = markerpixel
+        img[rect.bottom() + 1][x] = markerpixel
+    for y in range(rect.top(), rect.bottom()):
+        img[y][rect.left()] = markerpixel
+        img[y][rect.left() - 1] = markerpixel
+        img[y][rect.left() + 1] = markerpixel
+        img[y][rect.right()] = markerpixel
+        img[y][rect.right() - 1] = markerpixel
+        img[y][rect.right() + 1] = markerpixel
+
+def draw_marker(img, markers):
+    markerpixel = [0,255,0]
+    for point in enumerate(markers):
+        img[point[1].y][point[1].x] = markerpixel
+        img[point[1].y][point[1].x + 1] = markerpixel
+        img[point[1].y][point[1].x + 2] = markerpixel
+        img[point[1].y][point[1].x - 1] = markerpixel
+        img[point[1].y][point[1].x - 2] = markerpixel
+        img[point[1].y + 1][point[1].x] = markerpixel
+        img[point[1].y + 2][point[1].x] = markerpixel
+        img[point[1].y - 1][point[1].x] = markerpixel
+        img[point[1].y - 2][point[1].x] = markerpixel
+
 if __name__ == '__main__':
     test()
