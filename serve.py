@@ -148,7 +148,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         hog_face_detector = dlib.get_frontal_face_detector()
         image = dlib.load_rgb_image(absoluteFile)
         dets_hog = hog_face_detector(image, 1)
-        predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
+        predictor = dlib.shape_predictor("shape_predictor_5_face_landmarks.dat")
         for i, d in enumerate(dets_hog):
             shape = predictor(image, d)
             draw_rect(image, d)
@@ -164,7 +164,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         dets_hog = hog_face_detector(image, 1)
         if len(dets_hog) != 1:
             return False
-        predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
+        predictor = dlib.shape_predictor("shape_predictor_5_face_landmarks.dat")
         facerec = dlib.face_recognition_model_v1("dlib_face_recognition_resnet_model_v1.dat")
         for i, d in enumerate(dets_hog):
             shape = predictor(image, d)
@@ -181,7 +181,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         hog_face_detector = dlib.get_frontal_face_detector()
         image = dlib.load_rgb_image(absoluteFile)
         dets_hog = hog_face_detector(image, 1)
-        predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
+        predictor = dlib.shape_predictor("shape_predictor_5_face_landmarks.dat")
         facerec = dlib.face_recognition_model_v1("dlib_face_recognition_resnet_model_v1.dat")
         for i, d in enumerate(dets_hog):
             shape = predictor(image, d)
