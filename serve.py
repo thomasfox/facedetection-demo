@@ -29,6 +29,8 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
     step_times = []
 
+    labeled_chips = {}
+
     hog_face_detector = dlib.get_frontal_face_detector()
 
     predictor = dlib.shape_predictor("shape_predictor_5_face_landmarks.dat")
@@ -117,6 +119,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
     def process_uploaded_file(self, absoluteFile: str, filename:str, action: str, label: str):
         self.step_times.clear()
+        self.labeled_chips.clear()
         if (action == "upload"):
             self.display_upload_success(filename)
         if (action == "hog"):
@@ -141,7 +144,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                     cells_per_block=(1, 1), visualize=True, multichannel=False)
         start_time = time.clock()
         hog_image_rescaled = exposure.rescale_intensity(hog_image, in_range=(0, 10))
-        self.step_times.append("HOG Creation: " + str(time.clock() - start_time) + " s")
+        self.step_times.append("HOG Creation: %.3f s" % (time.clock() - start_time))
         processed_file = self.path_to_processed_file(filename, "hog")
         pyplot.imsave(processed_file, hog_image_rescaled)
 
@@ -149,7 +152,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         image = dlib.load_rgb_image(absoluteFile)
         start_time = time.clock()
         dets_hog = self.hog_face_detector(image, 1)
-        self.step_times.append("HOG + SVM Detection: " + str(time.clock() - start_time) + " s")
+        self.step_times.append("HOG + SVM Detection: %.3f s" % (time.clock() - start_time))
         for i, d in enumerate(dets_hog):
             draw_rect(image, d)
         processed_file = self.path_to_processed_file(filename, "facedetection")
@@ -159,11 +162,11 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         image = dlib.load_rgb_image(absoluteFile)
         start_time = time.clock()
         dets_hog = self.hog_face_detector(image, 1)
-        self.step_times.append("HOG + SVM Detection: " + str(time.clock() - start_time) + " s")
+        self.step_times.append("HOG + SVM Detection: %.3f s" % (time.clock() - start_time))
         for i, d in enumerate(dets_hog):
             start_time = time.clock()
             shape = self.predictor(image, d)
-            self.step_times.append("Landmark Detection: " + str(time.clock() - start_time) + " s")
+            self.step_times.append("Landmark Detection: %.3f s" % (time.clock() - start_time))
             draw_rect(image, d)
             draw_marker(image, shape.parts())
         processed_file = self.path_to_processed_file(filename, "facelandmark")
@@ -175,17 +178,17 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         image = dlib.load_rgb_image(absoluteFile)
         start_time = time.clock()
         dets_hog = self.hog_face_detector(image, 1)
-        self.step_times.append("HOG + SVM Detection: " + str(time.clock() - start_time) + " s")
+        self.step_times.append("HOG + SVM Detection: %.3f s" % (time.clock() - start_time))
         if len(dets_hog) != 1:
             return False
         for i, d in enumerate(dets_hog):
             start_time = time.clock()
             shape = self.predictor(image, d)
-            self.step_times.append("Landmark Detection: " + str(time.clock() - start_time) + " s")
+            self.step_times.append("Landmark Detection: %.3f s" % (time.clock() - start_time))
 
             start_time = time.clock()
             face_descriptor = self.facerec.compute_face_descriptor(image, shape)
-            self.step_times.append("Face Descriptor Computation: " + str(time.clock() - start_time) + " s")
+            self.step_times.append("Face Descriptor Computation: %.3f s" % (time.clock() - start_time))
 
             self.face_descriptors[label] = face_descriptor;
             draw_rect(image, d)
@@ -199,11 +202,11 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         image = dlib.load_rgb_image(absoluteFile)
         start_time = time.clock()
         dets_hog = self.hog_face_detector(image, 1)
-        self.step_times.append("HOG + SVM Detection: " + str(time.clock() - start_time) + " s")
+        self.step_times.append("HOG + SVM Detection: %.3f s" % (time.clock() - start_time))
         for i, d in enumerate(dets_hog):
             start_time = time.clock()
             shape = self.predictor(image, d)
-            self.step_times.append("Landmark Detection: " + str(time.clock() - start_time) + " s")
+            self.step_times.append("Landmark Detection: %.3f s" % (time.clock() - start_time))
 
             face_chip = dlib.get_face_chip(image, shape)
             chip_file = self.path_to_processed_file(filename, str(i))
@@ -211,15 +214,19 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
             start_time = time.clock()
             face_descriptor = self.facerec.compute_face_descriptor(image, shape)
-            self.step_times.append("Face Descriptor Computation: " + str(time.clock() - start_time) + " s")
+            self.step_times.append("Face Descriptor Computation: " %.3f s" % (time.clock() - start_time))
 
             draw_rect(image, d)
+            face_label = "???[" + str(i) + "]"
             for label, known_descriptor in self.face_descriptors.items():
                 distance = 0.0
                 for i in range(len(face_descriptor)):
                     distance = distance + (face_descriptor[i] - known_descriptor[i]) * (face_descriptor[i] - known_descriptor[i])
                 distance = math.sqrt(distance)
+                if (distance < 0.6):
+                    face_label = label + (" (distance=%.3f)" % distance)
                 print("Distance to {} is {}".format(label, distance))
+            self.labeled_chips[face_label] = chip_file
         processed_file = self.path_to_processed_file(filename, "facerecognition")
         dlib.save_image(image, processed_file)
 
@@ -232,6 +239,14 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         f.write(("<img src=\"%s\"/>\n" % uploaded_file).encode())
         f.write(("<img src=\"%s\"/>\n" % processed_file).encode())
         f.write(b"<br><br>")
+        if (len(self.labeled_chips) > 0):
+            f.write(b"<h2>recognition result</h2>\n<table style=\"width:100%\"><tr>\n")
+            for label, chip_file in self.labeled_chips.items():
+                f.write(("<td><img src=\"%s\"/></td>\n" % chip_file).encode())
+            f.write(b"</tr><tr>")
+            for label, chip_file in self.labeled_chips.items():
+                f.write(("<td>%s</td>\n" % label).encode())
+            f.write(b"</tr></table><br><br>\n")
         f.write(b"<h2>process times</h2>")
         for step_time in self.step_times:
             f.write((step_time + "<br>").encode())
