@@ -37,6 +37,8 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
     facerec = dlib.face_recognition_model_v1("dlib_face_recognition_resnet_model_v1.dat")
 
+    trained_detector = None
+
     def do_GET(self):
         f = self.send_head()
         if f:
@@ -78,9 +80,15 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         if not content_type:
             return (False, "No Content-Type header")
         multipart_data = decoder.MultipartDecoder(self.rfile.read(data_length), content_type)
+        filename = None
         label = None
+        mark = {}
         for part in multipart_data.parts:
             content_disposition = part.headers[b"Content-Disposition"]
+            if (b"name=\"min" in content_disposition or b"name=\"max" in content_disposition):
+                mark[re.findall("name=\"(\w*?)\"", content_disposition.decode())[0]] = part.text
+            if (b"name=\"filename\"" in content_disposition):
+                filename = part.text
             if b"name=\"file\"" in content_disposition:
                 filename = re.findall(r'.*filename="(.*)"', content_disposition.decode())[0]
                 print("filename is " + filename)
@@ -92,10 +100,45 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 label = part.text
                 print("label is " + label)
 
-        if not filename:
-            return (False, "Can't find out file name")
+        if len(mark) > 0 and "minX" in mark and mark["minX"]:
+            trainpath = os.path.join(self.translate_path(self.path), "train.txt")
+            try:
+                out = open(trainpath, 'a')
+                out.write(str(mark["minX"]) + ";" +str(mark["minY"]) + ";" + str(mark["maxX"]) + ";" + str(mark["maxY"]) + ";" + filename + "\n")
+                out.close()
+            except IOError:
+                return (False, "Can't create file %s to write" % trainpath)
+            self.display_success(None, "appended Marker for %s to training data" % filename)
+            return (True, "success")
         if not action:
             return (False, "Can't find out action")
+        if (action == "resetTraining"):
+            trainpath = os.path.join(self.translate_path(self.path), "train.txt")
+            os.remove(trainpath)
+            self.display_success(None, "resetted training data")
+            return (True, "success")
+        if (action == "doTraining"):
+            trainpath = os.path.join(self.translate_path(self.path), "train.txt")
+            trainfile = open(trainpath, 'r')
+            testdatadef = trainfile.readlines()
+            trainfile.close()
+            images = []
+            boxes = []
+            for testdata in testdatadef:
+                testvalues = testdata.split(";")
+                boxes.append([dlib.rectangle(int(testvalues[0]), int(testvalues[1]), int(testvalues[2]), int(testvalues[3]))])
+                imagepath = os.path.join(self.translate_path(self.path), testvalues[4].strip("\n"))
+                images.append(dlib.load_grayscale_image(imagepath))
+            options = dlib.simple_object_detector_training_options()
+            options.add_left_right_image_flips = True
+            options.C = 5
+            options.be_verbose = False
+            SimpleHTTPRequestHandler.trained_detector = dlib.train_simple_object_detector(images, boxes, options)
+            print(type(SimpleHTTPRequestHandler.trained_detector))
+            self.display_success(None, "Training successful")
+            return (True, "success")
+        if not filename:
+            return (False, "Can't find out file name")
         if (filename.endswith(".py") or filename.endswith(".dat")):
              directory = self.translate_path(self.path)
         else:
@@ -121,7 +164,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         self.step_times.clear()
         self.labeled_chips.clear()
         if (action == "upload"):
-            self.display_upload_success(filename)
+            self.display_success(filename, "Successfully uploaded file ")
         if (action == "hog"):
             self.create_hog_image(absoluteFile, filename)
             self.display_files(filename, "hog")
@@ -137,6 +180,11 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         if (action == "facerecognition"):
             self.recognize_face(absoluteFile, filename)
             self.display_files(filename, "facerecognition")
+        if (action == "markregion"):
+            self.display_files(filename, None)
+        if (action == "useTrainedDetector"):
+            self.use_trained_detector(absoluteFile, filename)
+            self.display_files(filename, "trainedhog")
 
     def create_hog_image(self, absoluteFile: str, filename: str):
         image = dlib.load_grayscale_image(absoluteFile)
@@ -158,6 +206,18 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         processed_file = self.path_to_processed_file(filename, "facedetection")
         dlib.save_image(image, processed_file)
 
+    def use_trained_detector(self, absoluteFile: str, filename: str):
+        print(type(SimpleHTTPRequestHandler.trained_detector))
+        image = dlib.load_rgb_image(absoluteFile)
+        start_time = time.clock()
+        dets_hog = SimpleHTTPRequestHandler.trained_detector(image, 1)
+        self.step_times.append("Trained HOG + SVM Detection: %.3f s" % (time.clock() - start_time))
+        for i, d in enumerate(dets_hog):
+            print("detected object: " + str(d))
+            draw_rect(image, d)
+        processed_file = self.path_to_processed_file(filename, "trainedhog")
+        dlib.save_image(image, processed_file)
+
     def landmark_faces(self, absoluteFile: str, filename: str):
         image = dlib.load_rgb_image(absoluteFile)
         start_time = time.clock()
@@ -167,7 +227,6 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             start_time = time.clock()
             shape = self.predictor(image, d)
             self.step_times.append("Landmark Detection: %.3f s" % (time.clock() - start_time))
-            draw_rect(image, d)
             draw_marker(image, shape.parts())
         processed_file = self.path_to_processed_file(filename, "facelandmark")
         dlib.save_image(image, processed_file)
@@ -214,7 +273,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
             start_time = time.clock()
             face_descriptor = self.facerec.compute_face_descriptor(image, shape)
-            self.step_times.append("Face Descriptor Computation: " %.3f s" % (time.clock() - start_time))
+            self.step_times.append("Face Descriptor Computation:  %.3f s" % (time.clock() - start_time))
 
             draw_rect(image, d)
             face_label = "???[" + str(i) + "]"
@@ -232,13 +291,34 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
     def display_files(self, filename, classifier):
         uploaded_file = self.path_to_uploaded_file(filename)
-        processed_file = self.path_to_processed_file(filename, classifier)
+        if classifier != None:
+            processed_file = self.path_to_processed_file(filename, classifier)
         f = BytesIO()
         f.write(b'<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">')
         f.write(b"<html>\n<title>Processed File result</title>\n")
-        f.write(("<img src=\"%s\"/>\n" % uploaded_file).encode())
-        f.write(("<img src=\"%s\"/>\n" % processed_file).encode())
-        f.write(b"<br><br>")
+        if classifier != None:
+            f.write(("<img src=\"%s\"/>\n" % uploaded_file).encode())
+            f.write(("<img src=\"%s\"/>\n" % processed_file).encode())
+        else:
+            f.write(b"<form ENCTYPE=\"multipart/form-data\" method=\"post\"\n>")
+            f.write(b"<div id=\"selector\" hidden=\"hidden\" style=\"border: 3px dotted red; position: absolute;\" ")
+            f.write(b"<div id=\"selector\" hidden=\"hidden\" style=\"border: 3px dotted red; position: absolute;\" ")
+            f.write(b"onmousedown=\"startMarker(event)\" onmousemove=\"updateMarker(event)\" onmouseup=\"finalizeMarker(event)\"></div>")
+            f.write(b"<input id=\"minX\" name=\"minX\" type=\"hidden\" /><input id=\"maxX\" name=\"maxX\" type=\"hidden\" />")
+            f.write(b"<input id=\"minY\" name=\"minY\" type=\"hidden\" /><input id=\"maxY\" name=\"maxY\" type=\"hidden\" />")
+            f.write(("<input name=\"filename\" type=\"hidden\" value=\"%s\"/>"% uploaded_file).encode())
+            f.write(b"<div id=\"selector\" hidden=\"hidden\" style=\"border: 1px dotted #000; position: absolute;\"></div>")
+            f.write(b"<script>var x1, x2, y1, y2; var doSelect=false;\n")
+            f.write(b"function updateSelector() { minX.value = Math.min(x1,x2); maxX.value = Math.max(x1,x2); minY.value = Math.min(y1,y2); maxY.value = Math.max(y1,y2); ")
+            f.write(b"selector.style.left = minX.value + 'px'; selector.style.top = minY.value + 'px';")
+            f.write(b"selector.style.width = (maxX.value - minX.value) + 'px'; selector.style.height = (maxY.value - minY.value) + 'px'; };\n")
+            f.write(b"function startMarker(e) { doSelect=true; selector.hidden = 0; x1 = e.clientX; y1 = e.clientY; updateSelector();debugEl.textContent=\'started\';};\n")
+            f.write(b"function updateMarker(e) {if (doSelect) {x2 = e.clientX; y2 = e.clientY; updateSelector(); debugEl.textContent= '(' + x1 +\',\' + y1 + '):(' + x2 +\',\' + y2 + \')\'}};\n")
+            f.write(b"function finalizeMarker(e) {updateMarker(e); doSelect=false; debugEl.textContent=\'stopped\';};</script>\n")
+            f.write(("<img src=\"%s\" draggable=\"false\" " % uploaded_file).encode())
+            f.write(b"onmousedown=\"startMarker(event)\" onmousemove=\"updateMarker(event)\" onmouseup=\"finalizeMarker(event)\"/><span id=\"debugEl\" ></span><br/>")
+            f.write(b"<input type=\"submit\" name=\"mark\" value=\"Mark region\"/></form>\n")
+            f.write(b"</form>\n")
         if (len(self.labeled_chips) > 0):
             f.write(b"<h2>recognition result</h2>\n<table style=\"width:100%\"><tr>\n")
             for label, chip_file in self.labeled_chips.items():
@@ -261,12 +341,13 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         self.copyfile(f, self.wfile)
         f.close()
 
-    def display_upload_success(self, filename: str):
+    def display_success(self, filename: str, message: str):
         f = BytesIO()
         f.write(b'<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">')
         f.write(b"<html>\n<title>Upload Result Page</title>\n")
-        f.write(b"<strong>Success fully uploaded </strong>")
-        f.write(filename.encode())
+        f.write(("<strong>%s</strong>" % message).encode())
+        if filename:
+            f.write(filename.encode())
         f.write(("<br><a href=\"%s\">back</a>" % self.headers['referer']).encode())
         f.write(b"</body>\n</html>\n")
         length = f.tell()
@@ -334,7 +415,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         f.write(("<body>\n<h2>Directory listing for %s</h2>\n" % displaypath).encode())
         f.write(b"<hr>\n")
         f.write(b"<form ENCTYPE=\"multipart/form-data\" method=\"post\">")
-        f.write(b"<input name=\"file\" type=\"file\"/>")
+        f.write(b"<input name=\"file\" accept=\"image/*;capture=camera\" type=\"file\"/>")
         f.write(b"<select name=\"action\" />")
         f.write(b"<option value=\"upload\">Upload</option>")
         f.write(b"<option value=\"hog\">Generate HOG</option>")
@@ -342,9 +423,13 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         f.write(b"<option value=\"facelandmark\">Landmark faces</option>")
         f.write(b"<option value=\"facelabel\">Label a face</option>")
         f.write(b"<option value=\"facerecognition\">Recognize faces</option>")
+        f.write(b"<option value=\"markregion\">Mark region</option>")
+        f.write(b"<option value=\"resetTraining\">Reset training data</option>")
+        f.write(b"<option value=\"doTraining\">Train HOG detector with training data</option>")
+        f.write(b"<option value=\"useTrainedDetector\">Use trained HOG Detector</option>")
         f.write(b"</select/>")
         f.write(b" Label: <input name=\"label\"/>")
-        f.write(b"<input type=\"submit\" value=\"upload\"/></form>\n")
+        f.write(b"<input type=\"submit\" value=\"process\"/></form>\n")
         f.write(b"<hr>\n<ul>\n")
         for name in list:
             fullname = os.path.join(path, name)
@@ -394,7 +479,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             return self.extensions_map[ext]
         else:
             return self.extensions_map['']
- 
+
     if not mimetypes.inited:
         mimetypes.init() # try to read system mime.types
     extensions_map = mimetypes.types_map.copy()
