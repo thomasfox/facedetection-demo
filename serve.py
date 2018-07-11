@@ -114,7 +114,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self.display_success(None, "resetted training data")
             return (True, "success")
         if (action == "doTraining"):
-
+            self.do_training()
             self.display_success(None, "Training successful")
             return (True, "success")
         if not filename:
@@ -275,6 +275,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         options.C = 5
 #        options.be_verbose = False
         SimpleHTTPRequestHandler.trained_detector = dlib.train_simple_object_detector(images, boxes, options)
+        print(type(SimpleHTTPRequestHandler.trained_detector))
 
     def use_trained_detector(self, absoluteFile: str, filename: str):
         print(type(SimpleHTTPRequestHandler.trained_detector))
@@ -496,27 +497,31 @@ def test(HandlerClass = SimpleHTTPRequestHandler,
 def draw_rectangle(img, rect):
     markerpixel = [255,0,0]
     for x in range(rect.left(), rect.right()):
-        img[rect.top()][x] = markerpixel
-        img[rect.top() + 1][x] = markerpixel
-        img[rect.top() - 1][x] = markerpixel
-        img[rect.bottom()][x] = markerpixel
-        img[rect.bottom() - 1][x] = markerpixel
-        img[rect.bottom() + 1][x] = markerpixel
+        point(x, rect.top(), img, markerpixel)
+        point(x, rect.top() + 1, img, markerpixel)
+        point(x, rect.top() - 1, img, markerpixel)
+        point(x, rect.bottom(), img, markerpixel)
+        point(x, rect.bottom() + 1, img, markerpixel)
+        point(x, rect.bottom() - 1, img, markerpixel)
     for y in range(rect.top(), rect.bottom()):
-        img[y][rect.left()] = markerpixel
-        img[y][rect.left() - 1] = markerpixel
-        img[y][rect.left() + 1] = markerpixel
-        img[y][rect.right()] = markerpixel
-        img[y][rect.right() - 1] = markerpixel
-        img[y][rect.right() + 1] = markerpixel
+        point(rect.left(), y, img, markerpixel)
+        point(rect.left() - 1, y, img, markerpixel)
+        point(rect.left() + 1, y, img, markerpixel)
+        point(rect.right(), y, img, markerpixel)
+        point(rect.right() - 1, y, img, markerpixel)
+        point(rect.right() + 1, y, img, markerpixel)
+
+def point(x, y, img, pixel):
+    if (x >= 0 and y >= 0):
+        img[y][x] = pixel
 
 def draw_marker(img, markers):
     markerpixel = [0,255,0]
     for point in enumerate(markers):
         for i in range(-6, 7): # line lenght
             for j in range(-1, 2): # line width
-                img[point[1].y + j][point[1].x + i] = markerpixel
-                img[point[1].y + i][point[1].x + j] = markerpixel
+                point(point[1].x + i, point[1].y + j, img, markerpixel)
+                point(point[1].x + j, point[1].y + i, img, markerpixel)
 
 if __name__ == '__main__':
     test()
