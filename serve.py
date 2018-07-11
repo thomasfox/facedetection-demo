@@ -1,5 +1,3 @@
-
- 
 __version__ = "0.1"
 __all__ = ["SimpleHTTPRequestHandler"]
  
@@ -19,8 +17,6 @@ from skimage import data, exposure
 from matplotlib import pyplot
 from requests_toolbelt.multipart import decoder
 import time
-
-
 
 
 class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
@@ -118,23 +114,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self.display_success(None, "resetted training data")
             return (True, "success")
         if (action == "doTraining"):
-            trainpath = os.path.join(self.translate_path(self.path), "train.txt")
-            trainfile = open(trainpath, 'r')
-            testdatadef = trainfile.readlines()
-            trainfile.close()
-            images = []
-            boxes = []
-            for testdata in testdatadef:
-                testvalues = testdata.split(";")
-                boxes.append([dlib.rectangle(int(testvalues[0]), int(testvalues[1]), int(testvalues[2]), int(testvalues[3]))])
-                imagepath = os.path.join(self.translate_path(self.path), testvalues[4].strip("\n"))
-                images.append(dlib.load_grayscale_image(imagepath))
-            options = dlib.simple_object_detector_training_options()
-            options.add_left_right_image_flips = True
-            options.C = 5
-            options.be_verbose = False
-            SimpleHTTPRequestHandler.trained_detector = dlib.train_simple_object_detector(images, boxes, options)
-            print(type(SimpleHTTPRequestHandler.trained_detector))
+
             self.display_success(None, "Training successful")
             return (True, "success")
         if not filename:
@@ -199,23 +179,11 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
     def detect_faces(self, absoluteFile: str, filename: str):
         image = dlib.load_rgb_image(absoluteFile)
         start_time = time.clock()
-        dets_hog = self.hog_face_detector(image, 1)
+        face_boundaries = self.hog_face_detector(image, 1)
         self.step_times.append("HOG + SVM Detection: %.3f s" % (time.clock() - start_time))
-        for i, d in enumerate(dets_hog):
-            draw_rect(image, d)
+        for i, d in enumerate(face_boundaries):
+            draw_rectangle(image, d)
         processed_file = self.path_to_processed_file(filename, "facedetection")
-        dlib.save_image(image, processed_file)
-
-    def use_trained_detector(self, absoluteFile: str, filename: str):
-        print(type(SimpleHTTPRequestHandler.trained_detector))
-        image = dlib.load_rgb_image(absoluteFile)
-        start_time = time.clock()
-        dets_hog = SimpleHTTPRequestHandler.trained_detector(image, 1)
-        self.step_times.append("Trained HOG + SVM Detection: %.3f s" % (time.clock() - start_time))
-        for i, d in enumerate(dets_hog):
-            print("detected object: " + str(d))
-            draw_rect(image, d)
-        processed_file = self.path_to_processed_file(filename, "trainedhog")
         dlib.save_image(image, processed_file)
 
     def landmark_faces(self, absoluteFile: str, filename: str):
@@ -229,30 +197,6 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self.step_times.append("Landmark Detection: %.3f s" % (time.clock() - start_time))
             draw_marker(image, shape.parts())
         processed_file = self.path_to_processed_file(filename, "facelandmark")
-        dlib.save_image(image, processed_file)
-
-    def label_face(self, absoluteFile: str, filename: str, label: str):
-        if not label:
-            return False
-        image = dlib.load_rgb_image(absoluteFile)
-        start_time = time.clock()
-        dets_hog = self.hog_face_detector(image, 1)
-        self.step_times.append("HOG + SVM Detection: %.3f s" % (time.clock() - start_time))
-        if len(dets_hog) != 1:
-            return False
-        for i, d in enumerate(dets_hog):
-            start_time = time.clock()
-            shape = self.predictor(image, d)
-            self.step_times.append("Landmark Detection: %.3f s" % (time.clock() - start_time))
-
-            start_time = time.clock()
-            face_descriptor = self.facerec.compute_face_descriptor(image, shape)
-            self.step_times.append("Face Descriptor Computation: %.3f s" % (time.clock() - start_time))
-
-            self.face_descriptors[label] = face_descriptor;
-            draw_rect(image, d)
-        print("labeled face as " + label)
-        processed_file = self.path_to_processed_file(filename, label)
         dlib.save_image(image, processed_file)
 
     def recognize_face(self, absoluteFile: str, filename: str):
@@ -275,7 +219,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             face_descriptor = self.facerec.compute_face_descriptor(image, shape)
             self.step_times.append("Face Descriptor Computation:  %.3f s" % (time.clock() - start_time))
 
-            draw_rect(image, d)
+            draw_rectangle(image, d)
             face_label = "???[" + str(i) + "]"
             for label, known_descriptor in self.face_descriptors.items():
                 distance = 0.0
@@ -287,6 +231,61 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 print("Distance to {} is {}".format(label, distance))
             self.labeled_chips[face_label] = chip_file
         processed_file = self.path_to_processed_file(filename, "facerecognition")
+        dlib.save_image(image, processed_file)
+
+    def label_face(self, absoluteFile: str, filename: str, label: str):
+        if not label:
+            return False
+        image = dlib.load_rgb_image(absoluteFile)
+        start_time = time.clock()
+        dets_hog = self.hog_face_detector(image, 1)
+        self.step_times.append("HOG + SVM Detection: %.3f s" % (time.clock() - start_time))
+        if len(dets_hog) != 1:
+            return False
+        for i, d in enumerate(dets_hog):
+            start_time = time.clock()
+            shape = self.predictor(image, d)
+            self.step_times.append("Landmark Detection: %.3f s" % (time.clock() - start_time))
+
+            start_time = time.clock()
+            face_descriptor = self.facerec.compute_face_descriptor(image, shape)
+            self.step_times.append("Face Descriptor Computation: %.3f s" % (time.clock() - start_time))
+
+            self.face_descriptors[label] = face_descriptor;
+            draw_rectangle(image, d)
+        print("labeled face as " + label)
+        processed_file = self.path_to_processed_file(filename, label)
+        dlib.save_image(image, processed_file)
+
+    def do_training(self):
+        trainpath = os.path.join(self.translate_path(self.path), "train.txt")
+        trainfile = open(trainpath, 'r')
+        testdatadef = trainfile.readlines()
+        trainfile.close()
+
+        images = []
+        boxes = []
+        for testdata in testdatadef:
+            testvalues = testdata.split(";")
+            boxes.append([dlib.rectangle(int(testvalues[0]), int(testvalues[1]), int(testvalues[2]), int(testvalues[3]))])
+            imagepath = os.path.join(self.translate_path(self.path), testvalues[4].strip("\n"))
+            images.append(dlib.load_grayscale_image(imagepath))
+        options = dlib.simple_object_detector_training_options()
+        options.add_left_right_image_flips = True
+        options.C = 5
+#        options.be_verbose = False
+        SimpleHTTPRequestHandler.trained_detector = dlib.train_simple_object_detector(images, boxes, options)
+
+    def use_trained_detector(self, absoluteFile: str, filename: str):
+        print(type(SimpleHTTPRequestHandler.trained_detector))
+        image = dlib.load_rgb_image(absoluteFile)
+        start_time = time.clock()
+        dets_hog = SimpleHTTPRequestHandler.trained_detector(image, 1)
+        self.step_times.append("Trained HOG + SVM Detection: %.3f s" % (time.clock() - start_time))
+        for i, d in enumerate(dets_hog):
+            print("detected object: " + str(d))
+            draw_rectangle(image, d)
+        processed_file = self.path_to_processed_file(filename, "trainedhog")
         dlib.save_image(image, processed_file)
 
     def display_files(self, filename, classifier):
@@ -494,7 +493,7 @@ def test(HandlerClass = SimpleHTTPRequestHandler,
          ServerClass = http.server.HTTPServer):
     http.server.test(HandlerClass, ServerClass)
 
-def draw_rect(img, rect):
+def draw_rectangle(img, rect):
     markerpixel = [255,0,0]
     for x in range(rect.left(), rect.right()):
         img[rect.top()][x] = markerpixel
