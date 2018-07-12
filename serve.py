@@ -120,7 +120,7 @@ class SimpleHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             return (True, "success")
         if not filename:
             return (False, "Can't find out file name")
-        if (filename.endswith(".py") or filename.endswith(".dat") or filename.endswith(".css")):
+        if (filename.endswith(".py") or filename.endswith(".dat") or filename.endswith(".txt")):
              directory = self.translate_path(self.path)
         else:
             if not (filename.endswith(".jpg") or filename.endswith(".jpeg") or filename.endswith(".png")):
