@@ -16,3 +16,5 @@ RUN mkdir /facerecognition \
   && curl -O http://dlib.net/files/dlib_face_recognition_resnet_model_v1.dat.bz2 \
   && bzip2 -d dlib_face_recognition_resnet_model_v1.dat.bz2
 COPY *.py /facerecognition/
+COPY *.css /facerecognition/
+CMD [ "python3", "./facerecognition/serve.py" ]
