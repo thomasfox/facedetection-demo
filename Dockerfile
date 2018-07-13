@@ -17,4 +17,5 @@ RUN mkdir /facerecognition \
   && bzip2 -d dlib_face_recognition_resnet_model_v1.dat.bz2
 COPY *.py /facerecognition/
 COPY *.css /facerecognition/
-CMD [ "python3", "./facerecognition/serve.py" ]
+WORKDIR /facerecognition
+CMD [ "python3", "./serve.py" ]
