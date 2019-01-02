@@ -8,6 +8,11 @@ import shutil
 
 class HTTPRequestHandler(http.server.BaseHTTPRequestHandler):
     
+    detector = None
+    detector0 = None
+    detector1 = None
+    detector2 = None
+        
     def do_POST(self):
         self.send_response(200)
         self.send_header("Content-type", "application/json")
@@ -94,6 +99,11 @@ class HTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         self.train_object_detector_for_path("landmarks_0.xml", "detector_0.svm")
         self.train_object_detector_for_path("landmarks_1.xml", "detector_1.svm")
         self.train_object_detector_for_path("landmarks_2.xml", "detector_2.svm")
+        self.detector = dlib.simple_object_detector("detector.svm")
+        self.detector0 = dlib.simple_object_detector("detector_0.svm")
+        self.detector1 = dlib.simple_object_detector("detector_1.svm")
+        self.detector2 = dlib.simple_object_detector("detector_2.svm")
+
         
     def train_object_detector_for_path(self, xmlPath, outputPath):
         options = dlib.simple_object_detector_training_options()
@@ -106,27 +116,42 @@ class HTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         dlib.train_simple_object_detector(training_xml_path, outputPath, options)
 
     def use_object_detector(self):
+
+        if (HTTPRequestHandler.detector == None):
+            if (os.path.isfile("detector.svm")):
+                print("initializing HOG detector")
+                HTTPRequestHandler.detector = dlib.simple_object_detector("detector.svm")
+                HTTPRequestHandler.detector0 = dlib.simple_object_detector("detector_0.svm")
+                HTTPRequestHandler.detector1 = dlib.simple_object_detector("detector_1.svm")
+                HTTPRequestHandler.detector2 = dlib.simple_object_detector("detector_2.svm")
+            else:
+                print("No detector available")
+                return
+
         self.wfile.write(b"[")
-        detector = dlib.simple_object_detector("detector.svm")
         firstFile = True
         for filename in glob.glob(os.path.join('tmp', "*.png")):
             print("Processing file: {}".format(filename))
             if (not firstFile):
                 self.wfile.write(b",")
             self.wfile.write(("{\"image\":\"%s\",\"detections\":[" % filename).encode())
-
+            
             image = dlib.load_rgb_image(filename)
-            dets = detector(image)
-            print("Number of objects detected: {}".format(len(dets)))
+#            dets = HTTPRequestHandler.detector(image)
+            detectors = [HTTPRequestHandler.detector0, HTTPRequestHandler.detector1, HTTPRequestHandler.detector2]
+            [boxes, confidences, detector_idxs] = dlib.fhog_object_detector.run_multiple(detectors, image, upsample_num_times=1, adjust_threshold=0.0)
+            print("boxes: {}".format(boxes))
+            print("confidences: {}".format(confidences))
+            print("detector_idxs: {}".format(detector_idxs))
             firstDetection = True
-            for i, d in enumerate(dets):
-                print("detected object: " + str(d))
+            for i in range(0, len(boxes)):
+                print("detected object: " + str(boxes[i]))
                 if (not firstDetection):
                     self.wfile.write(b",")
-                self.wfile.write(("{\"top\":%i,\"bottom\":%i,\"left\":%i,\"right\":%i}" % (d.top(), d.bottom(), d.left(), d.right())).encode())
-                self.draw_rectangle(image, d)
-                processed_file = self.path_to_processed_file(filename, "trainedhog")
-                dlib.save_image(image, processed_file)
+                self.wfile.write(("{\"top\":%i,\"bottom\":%i,\"left\":%i,\"right\":%i,\"index\":%i}" % (boxes[i].top(), boxes[i].bottom(), boxes[i].left(), boxes[i].right(), detector_idxs[i])).encode())
+#                 self.draw_rectangle(image, d)
+#                 processed_file = self.path_to_processed_file(filename, "trainedhog")
+#                 dlib.save_image(image, processed_file)
                 firstDetection = False
             self.wfile.write(b"]}")
             firstFile = False
