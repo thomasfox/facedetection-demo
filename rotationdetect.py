@@ -21,8 +21,7 @@ class HTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         if (self.path.startswith('/train')):
             self.unzip_post_body()
             self.train_object_detector()
-            response ="training done"
-            self.wfile.write(b"{\"training\" : \"done\"")
+            self.wfile.write(b"{\"training\" : \"done\"}")
             shutil.rmtree('tmp')
             return
         if (self.path.startswith('/detect/zip')):
